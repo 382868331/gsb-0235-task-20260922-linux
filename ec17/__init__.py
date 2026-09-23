@@ -1,0 +1,115 @@
+"""ec17 — 椭圆曲线教学签名严格验签库（仅教学，不安全，勿用于真实用途）。
+
+公开接口见模块成员与 README。本包只实现题面契约的有限数学/协议子集，
+不宣称兼容任何行业标准（非 RFC 6979 / 非 secp256k1 / 非 FIPS 186 实现）。
+"""
+
+from ._errors import (
+    EC17Error,
+    ValidationError,
+    TypeValidationError,
+    PointError,
+    CoordinateOutOfDomainError,
+    PointNotOnCurveError,
+    PointAtInfinityError,
+    EncodingError,
+    EmptyEncodingError,
+    TruncatedEncodingError,
+    InvalidEncodingPrefixError,
+    OutOfDomainEncodingError,
+    NonShortestEncodingError,
+    SignatureError,
+    ScalarOutOfRangeError,
+    SignatureMismatchError,
+    InvalidSecretKeyError,
+    InvalidNonceError,
+    MessageError,
+    MessageTypeError,
+    MessageTooLongError,
+)
+from ._curve import (
+    FIELD_PRIME,
+    COEFF_A,
+    COEFF_B,
+    GROUP_ORDER,
+    GENERATOR,
+    Point,
+    INFINITY,
+    is_on_curve,
+    point_neg,
+    point_add,
+    scalar_mul,
+)
+from ._encoding import (
+    encode_point,
+    decode_point,
+    encode_scalar,
+    decode_scalar,
+)
+from ._schnorr import (
+    MAX_MESSAGE_BYTES,
+    Signature,
+    challenge,
+    derive_public_key,
+    sign,
+    verify,
+    verify_encoded,
+    assert_verify,
+    encode_signature,
+    decode_signature,
+)
+
+__all__ = [
+    # 常量
+    "FIELD_PRIME",
+    "COEFF_A",
+    "COEFF_B",
+    "GROUP_ORDER",
+    "GENERATOR",
+    "MAX_MESSAGE_BYTES",
+    # 数据结构
+    "Point",
+    "INFINITY",
+    "Signature",
+    # 曲线运算
+    "is_on_curve",
+    "point_neg",
+    "point_add",
+    "scalar_mul",
+    # 点/标量编码
+    "encode_point",
+    "decode_point",
+    "encode_scalar",
+    "decode_scalar",
+    # Schnorr 教学签名
+    "challenge",
+    "derive_public_key",
+    "sign",
+    "verify",
+    "verify_encoded",
+    "assert_verify",
+    "encode_signature",
+    "decode_signature",
+    # 错误类型
+    "EC17Error",
+    "ValidationError",
+    "TypeValidationError",
+    "PointError",
+    "CoordinateOutOfDomainError",
+    "PointNotOnCurveError",
+    "PointAtInfinityError",
+    "EncodingError",
+    "EmptyEncodingError",
+    "TruncatedEncodingError",
+    "InvalidEncodingPrefixError",
+    "OutOfDomainEncodingError",
+    "NonShortestEncodingError",
+    "SignatureError",
+    "ScalarOutOfRangeError",
+    "SignatureMismatchError",
+    "InvalidSecretKeyError",
+    "InvalidNonceError",
+    "MessageError",
+    "MessageTypeError",
+    "MessageTooLongError",
+]
