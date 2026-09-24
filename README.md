@@ -2,16 +2,20 @@
 
 为离线密码工程教学实现的可复用库：在小素域椭圆曲线
 **y² = x³ + 2x + 2 (mod 17)** 上实现点加/倍乘、压缩点编码，以及一个
-Schnorr 风格教学签名的**严格验签**。
+Schnorr 风格教学签名的**严格验签**；并在无状态原语之上提供**带会话 ID 与
+nonce 生命周期（预留/使用/作废）的有状态签名会话**，防同 nonce 签不同消息、
+支持重复请求幂等与阶段乱序拒绝。
 
 > ⚠️ **教学专用，不提供任何安全性。** 群只有 19 个元素，私钥空间可瞬间穷举；
-> nonce 由调用方显式给定且不防重用；**禁止使用真实密钥/密钥文件**。
+> 无状态 `sign` 的 nonce 由调用方显式给定；会话层只在**单进程内存**内跟踪
+> nonce 状态，不持久化、无并发锁、无崩溃恢复；**禁止使用真实密钥/密钥文件**。
 > 本库只实现题面契约的有限数学/协议子集，**不兼容也不宣称兼容** RFC 6979、
 > secp256k1、FIPS 186 等任何行业标准。
 
 ## 运行环境
 
-- Python **3.14.7**（Linux 原生验证；仅使用标准库 `hashlib`、`dataclasses`、`math`、`unittest`）
+- Python **3.14.7**（Linux 原生验证；仅使用标准库 `hashlib`、`dataclasses`、
+  `enum`、`math`、`unittest`）
 - **无需安装任何第三方依赖**，安装 Python 后即可运行
 - 核心、测试、演示全部**离线**：不联网、不需要账号/硬件/数据库/中间件/云 API/Docker
 - 示例数据由仓库内确定性代码生成，无随机源、无外部附件
@@ -19,8 +23,8 @@ Schnorr 风格教学签名的**严格验签**。
 ## 准确命令
 
 ```bash
-python -m unittest discover -s tests -v   # 运行必要测试（62 个，约 0.2 秒）
-python demo.py                            # 固定输入演示（约 0.04 秒，远低于 8 秒）
+python -m unittest discover -s tests -v   # 运行必要测试（90 个，约 0.2 秒）
+python demo.py                            # 固定输入演示（约 0.04 秒，远低于 90 秒）
 ```
 
 ## 公开数据结构
@@ -30,6 +34,8 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
 | `Point` | 有限点，类型 `tuple[int, int]`，即 `(x, y)`，x,y ∈ 0..16 |
 | `INFINITY` | 无穷远点（群单位元），用 `None` 表示 |
 | `Signature` | 不可变 dataclass：`r: Point`、`s: int`、`message: bytes` |
+| `NonceStatus` | nonce 生命周期枚举：`RESERVED` / `USED` / `VOIDED` |
+| `SigningSession` | 带会话 ID 与 nonce 状态机的有状态签名会话（内存态） |
 
 曲线常量：`FIELD_PRIME=17`、`COEFF_A=2`、`COEFF_B=2`、`GROUP_ORDER=19`、
 `GENERATOR=(5,1)`、`MAX_MESSAGE_BYTES=65535`。
@@ -74,6 +80,48 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
 结构/范围非法抛对应可定位异常；仅“结构合法但等式 `s·G = R + e·P` 不成立”时
 `verify` 返回 `False`（`assert_verify` 抛 `SignatureMismatchError`）。
 
+以上无状态接口的语义在本次迭代中**完全不变**，原有合法调用与旧测试断言全部保留。
+
+### 有状态签名会话（`ec17/_session.py`，本次新增）
+
+`SigningSession(session_id, secret_key)` 在无状态原语之上提供进程内、内存态的
+会话层。会话 ID 为 1..`MAX_SESSION_ID_BYTES`(=256) 字节的 `bytes`（`str`
+不隐式编码）；私钥仍为 1..18。
+
+nonce（1..18）在**每个会话内独立**经历状态机：
+
+```
+(从未出现) ──reserve_nonce(k, m)──▶ RESERVED ──sign(m, k)──▶ USED
+                                       │                         │
+                                       │   同一(nonce,消息)重复 sign：幂等返回缓存签名
+                                       │   不同消息 sign：NonceReuseError
+                                       ▼
+                                    VOIDED（终态：作废/失败都不回收为可用）
+```
+
+- `reserve_nonce(nonce, message) -> bool`：**阶段 1**，预留 nonce 并绑定待签
+  消息（预留即绑定，才能判定“同一 nonce 不能签不同消息”）。首次预留返回
+  `True`；对同一 `(nonce, message)` 重复预留是幂等 no-op，返回 `False`、
+  状态不变。
+- `sign(message, nonce) -> Signature`：**阶段 2**，只能对“已预留且消息一致”
+  的 nonce 调用；成功后状态为 `used`。**同会话、同 nonce、同消息字节**的
+  重复请求幂等，返回首次生成的**同一个签名对象**（不重复计算）；已用 nonce
+  收到不同消息抛 `NonceReuseError`。
+- `void_nonce(nonce)`：把已预留或已使用的 nonce 置为作废终态。作废不可逆：
+  作废后再预留/使用/作废都抛 `NonceVoidedError`。**签名计算失败时该 nonce
+  自动作废，绝不回收为可用**（题面要求）。
+- 查询：`nonce_status(nonce)`（`"available"/"reserved"/"used"/"voided"`）、
+  `nonce_message(nonce)`、`signature_for(nonce)`、`reserved_nonces()`、
+  `used_nonces()`、`voided_nonces()`；属性 `session_id`、`secret_key`、
+  `public_key`。
+
+阶段乱序的错误：未预留就 `sign`/`void_nonce` 抛 `NonceNotReservedError`；
+预留后用不同消息签名（尚未使用）或重复预留成别的消息抛 `NonceStateError`。
+所有输入先完整校验、通过后才落状态，**任何失败都不留半更新**（测试逐条核对）。
+
+会话状态是对象实例级的：不同 `SigningSession` 对象之间互不共享，即使它们的
+会话 ID 相同。
+
 ## 错误语义（`ec17/_errors.py`）
 
 所有异常继承 `EC17Error`；类型错误同时是内置 `TypeError`。消息一律带参数名。
@@ -87,9 +135,16 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
   `NonShortestEncodingError`（任何尾随字节、`00` 后携带字节）。
 - 签名：`ScalarOutOfRangeError`、`SignatureMismatchError`、
   `InvalidSecretKeyError`、`InvalidNonceError`、`MessageTooLongError`。
+- 会话（新增）：`SessionError`（基类）、`InvalidSessionIdError`（空或超长
+  会话 ID）、`NonceStateError`（阶段乱序基类）、`NonceNotReservedError`
+  （未预留就使用/作废）、`NonceVoidedError`（操作已作废 nonce）、
+  `NonceReuseError`（同一 nonce 已签过一条消息又要求签不同消息）。
 
-设计原则：非法输入**报错而非静默纠正**；不存在“部分成功”的有状态变更
-（所有运算均为纯函数）；本库没有“搜索预算”类算法，也不区分预算耗尽/无解。
+设计原则：非法输入**报错而非静默纠正**。曲线/编码/签名层都是纯函数，
+不存在“部分成功”的变更；会话层是唯一有状态的部分，但每次状态迁移都在
+**全部输入校验通过之后**一次性落状态，失败路径要么完全不改状态、要么按
+题面把 nonce 置为作废终态（绝不半更新、绝不回收为可用）。本库没有“搜索
+预算”类算法，也不区分预算耗尽/无解。
 
 ### 错误奇偶前缀
 
@@ -107,6 +162,7 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
 - 点坐标 x,y：整数，0..16；群标量（s / scalar_mul 的 k）：0..18。
 - 私钥：1..18；签名 nonce：1..18。
 - 消息：`bytes`，长度 0..`MAX_MESSAGE_BYTES`(=65 535) 字节；`str` 不隐式编码。
+- 会话 ID：`bytes`，长度 1..`MAX_SESSION_ID_BYTES`(=256) 字节。
 - 编码长度：点 1 或 2 字节、标量恰 1 字节、签名帧恰 3 字节。
 - 所有整数参数拒绝 `bool`、`float`（含 NaN/Infinity）。
 
@@ -126,6 +182,10 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
   返回 `False`，避免把篡改误报成程序错误。
 - 群运算在每个入口重复做点校验而非只在边界校验，教学上保证任何组合调用
   都不可能处理非法点；曲线极小，性能无关紧要。
+- 会话层刻意只做“单对象内存态”：消息在预留时就绑定（否则无法定义“同一
+  nonce 不能签不同消息”），幂等以消息字节逐字节相等为准（`bytearray`
+  同内容视为同一请求），作废设计为不可逆终态——宁可废掉一个 nonce 也不
+  让它回到可用池，贴合题面“失败也不回收”。
 
 ## 测试与独立性
 
@@ -139,6 +199,13 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
 错误奇偶；签名 324 组 (私钥×nonce) 对独立参考的全量比对、s=0 合法签名、
 篡改消息、错误公钥、翻转 R 奇偶、**s+19 可塑性在边界被拒**、R/P 无穷远与
 不在曲线上、消息类型与长度上限、3 字节签名帧的各类畸形。
+会话层（`tests/test_session.py`，28 个用例）：全 18 个 nonce 对独立参考的
+签名比对、空消息与会话 ID 长度边界、**重复请求幂等**（返回同一签名对象/
+重复预留 no-op）、**同一 nonce 签不同消息抛 NonceReuseError** 并用解析关系
+`sk=(s1-s2)(e1-e2)^{-1} mod 19` 独立核算私钥泄露、**阶段乱序**（未预留就
+签名/作废、预留消息不一致、重复预留）、预留/已用 nonce 作废与作废终态、
+底层签名失败后 nonce 作废不回收（注入失败）、非法输入不留半更新、构造校验
+与多会话对象隔离。
 编解码往返一致只作为**补充**断言，不作为期望值来源。
 
 ## demo.py
@@ -147,13 +214,22 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
 message=b"ec17-schnorr-teaching"` 真实生成并验证一个签名（打印 R/P 编码、
 SHA256、e、s 与验签结果），并**实际触发**两个拒绝边界：篡改末字节的消息
 （`SignatureMismatchError`，`verify → False`）与 `s+19`（`ScalarOutOfRangeError`）。
+随后演示有状态会话（`secret_key=7, session_id=b"demo-session-001"`）：
+nonce=5 预留→签名（该固定数据恰好得到边界值 s=0）→同请求幂等重放；
+同 nonce 签不同消息抛 `NonceReuseError`，并现场用解析关系还原出私钥 7；
+未预留就签名抛 `NonceNotReservedError`；nonce=8 作废后重新预留抛
+`NonceVoidedError`；空会话 ID、nonce=0 在边界被拒且状态不变。
 不含 `sleep`，不使用预录结果，也不做压力测试。
 
 ## 已知限制
 
 - 仅支持这一条 17 阶小曲线与上述固定协议，不支持任意曲线参数、随机 nonce、
   批验签、DER/SEC1 多字节整数编码或任何标准序列化。
-- nonce 完全由调用方负责；重用 nonce 会直接泄露私钥（这正是教学要演示的风险）。
+- 无状态 `sign` 的 nonce 完全由调用方负责；重用 nonce 会直接泄露私钥
+  （这正是教学要演示的风险）。
+- `SigningSession` 状态仅在单进程内存中：**不持久化、无崩溃恢复、无并发
+  锁/原子性承诺**；不做两方阈值签名、不去重跨会话对象（会话 ID 是调用方
+  提供的标签，库不登记全局会话注册表）。
 - 不提供任何侧信道防护（标量乘非常量时间）；在 19 元素群上也无安全可言。
 - 无版本化/前向兼容承诺：这是一次性教学交付。
 
@@ -165,12 +241,14 @@ ec17/            可导入库
   _errors.py       错误类型与语义
   _curve.py        曲线点加/倍乘/标量乘
   _encoding.py     点与标量压缩编码（严格/最短/域外检查）
-  _schnorr.py      Schnorr 风格教学签名与严格验签
+  _schnorr.py      Schnorr 风格教学签名与严格验签（无状态）
+  _session.py      会话 ID + nonce 预留/使用/作废状态机（本次新增）
 tests/
   reference.py                     独立参考（不依赖被测核心）
   test_group_law.py                穷举群表/结合律/单位元/逆点
   test_encoding.py                 编码严格性
   test_schnorr.py                  验签/篡改/可塑性/无穷与离曲线
+  test_session.py                  会话/nonce 生命周期/幂等/乱序/作废（新增）
   test_reference_independence.py   参考隔离性（AST）
 demo.py          固定输入演示
 README.md

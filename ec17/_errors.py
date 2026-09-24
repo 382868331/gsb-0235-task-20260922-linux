@@ -88,3 +88,27 @@ class MessageTypeError(MessageError, TypeError):
 
 class MessageTooLongError(MessageError):
     """消息长度超过 :data:`ec17.MAX_MESSAGE_BYTES`。"""
+
+
+class SessionError(EC17Error):
+    """有状态签名会话（会话 ID / nonce 生命周期）相关错误的基类。"""
+
+
+class InvalidSessionIdError(SessionError):
+    """会话 ID 类型正确但值非法（空字节串或超过长度上限）。"""
+
+
+class NonceStateError(SessionError):
+    """nonce 状态机收到不被允许的阶段跳转（预留/使用/作废顺序被打乱）。"""
+
+
+class NonceNotReservedError(NonceStateError):
+    """未预留就使用或作废 nonce（跳过“预留”阶段）。"""
+
+
+class NonceVoidedError(NonceStateError):
+    """对已作废的 nonce 再次预留、使用或作废（作废不可逆、不回收）。"""
+
+
+class NonceReuseError(SessionError):
+    """同一 nonce 已签过一条消息，又被要求签另一条不同消息。"""

@@ -26,6 +26,12 @@ from ._errors import (
     MessageError,
     MessageTypeError,
     MessageTooLongError,
+    SessionError,
+    InvalidSessionIdError,
+    NonceStateError,
+    NonceNotReservedError,
+    NonceVoidedError,
+    NonceReuseError,
 )
 from ._curve import (
     FIELD_PRIME,
@@ -58,6 +64,11 @@ from ._schnorr import (
     encode_signature,
     decode_signature,
 )
+from ._session import (
+    MAX_SESSION_ID_BYTES,
+    NonceStatus,
+    SigningSession,
+)
 
 __all__ = [
     # 常量
@@ -67,10 +78,13 @@ __all__ = [
     "GROUP_ORDER",
     "GENERATOR",
     "MAX_MESSAGE_BYTES",
+    "MAX_SESSION_ID_BYTES",
     # 数据结构
     "Point",
     "INFINITY",
     "Signature",
+    "NonceStatus",
+    "SigningSession",
     # 曲线运算
     "is_on_curve",
     "point_neg",
@@ -112,4 +126,10 @@ __all__ = [
     "MessageError",
     "MessageTypeError",
     "MessageTooLongError",
+    "SessionError",
+    "InvalidSessionIdError",
+    "NonceStateError",
+    "NonceNotReservedError",
+    "NonceVoidedError",
+    "NonceReuseError",
 ]
