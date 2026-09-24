@@ -88,3 +88,43 @@ class MessageTypeError(MessageError, TypeError):
 
 class MessageTooLongError(MessageError):
     """消息长度超过 :data:`ec17.MAX_MESSAGE_BYTES`。"""
+
+
+class SessionError(EC17Error):
+    """会话与 nonce 生命周期相关错误的基类。"""
+
+
+class InvalidSessionIdError(SessionError, TypeError):
+    """会话 ID / 请求 ID 类型或格式非法（非 str、空串、过长、含控制字符）。"""
+
+
+class SessionNotFoundError(SessionError):
+    """会话注册表中不存在该会话 ID。"""
+
+
+class SessionAlreadyExistsError(SessionError):
+    """create_session 使用了已经存在的会话 ID。"""
+
+
+class SessionPhaseError(SessionError):
+    """操作与会话阶段不符（关闭后再预留/签名/作废、重复关闭）。"""
+
+
+class NonceReservationError(SessionError):
+    """预留冲突：nonce 在本会话中已被预留、使用或作废，不能再次预留。"""
+
+
+class NonceNotReservedError(SessionError):
+    """操作一个本会话中从未成功预留的 nonce。"""
+
+
+class NonceLifecycleError(SessionError):
+    """nonce 状态机不允许的转移（用已作废 nonce 签名、作废已使用/已作废的 nonce）。"""
+
+
+class NonceReuseError(SessionError):
+    """已使用的 nonce 被用于另一条不同消息；拒绝且该 nonce 不被回收为可用。"""
+
+
+class IdempotencyConflictError(SessionError):
+    """同一请求 ID 重放时携带了与首次请求不同的参数。"""

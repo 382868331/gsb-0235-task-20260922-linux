@@ -6,7 +6,9 @@
   1. 现场穷举 F_17 上的曲线点并核对基点阶；
   2. 用显式教学 nonce 对一条合成消息签名，打印编码并严格验真；
   3. 实际触发两个拒绝边界：篡改消息（SignatureMismatchError）
-     与 s+19 模阶可塑性（ScalarOutOfRangeError，在边界被拒绝）。
+     与 s+19 模阶可塑性（ScalarOutOfRangeError，在边界被拒绝）；
+  4. 会话层：会话 ID、nonce 预留→使用→作废状态机、请求 ID 幂等重放、
+     同 nonce 签不同消息被拒且不回收、失败不留半更新、关闭后的阶段乱序。
 
 警告：全部数据仅用于教学，私钥/nonce 都是写死的小整数，严禁用于真实场景。
 """
@@ -79,6 +81,102 @@ def main():
         ec17.verify(message, public_key, signature.r, signature.s + ec17.GROUP_ORDER)
     except ec17.ScalarOutOfRangeError as exc:
         print(f"如预期在边界拒绝（{type(exc).__name__}）：{exc}")
+
+    # --- 3. 会话层：ID / nonce 生命周期 / 请求幂等 --------------------------
+    print("\n== 会话层：会话 ID + nonce 预留/使用/作废 + 请求幂等 ==")
+    registry = ec17.SessionRegistry()
+    session = registry.create_session("session-demo", secret_key)
+    print(f"创建会话 session-demo，公钥 = {session.public_key}")
+
+    # 阶段乱序：未预留先签名
+    print("\n-- 阶段乱序：未预留 nonce 就签名 --")
+    try:
+        session.sign("req-early", message, nonce)
+    except ec17.NonceNotReservedError as exc:
+        print(f"如预期拒绝（{type(exc).__name__}）：{exc}")
+        print(f"  失败后 nonce 状态 = {session.nonce_status(nonce)}（未登记、未预留）")
+
+    # 正常路径：预留 -> 签名 -> used
+    session.reserve_nonce(nonce)
+    print(f"\n预留 nonce={nonce} 后状态 = {session.nonce_status(nonce)}")
+    sess_sig = session.sign("req-001", message, nonce)
+    print(f"请求 req-001 签名：R={sess_sig.r}, s={sess_sig.s}，"
+          f"状态 -> {session.nonce_status(nonce)}")
+    print(f"旧验签入口仍可用：{ec17.verify(message, session.public_key, sess_sig.r, sess_sig.s)}")
+
+    # 请求幂等：同请求 ID + 同参数原样重放
+    replayed = session.sign("req-001", message, nonce)
+    print(f"同请求 ID 重放返回同一签名对象：{replayed is sess_sig}")
+    # 同请求 ID + 不同参数 -> 冲突，状态不变
+    print("-- 请求幂等冲突：req-001 换消息重放 --")
+    try:
+        session.sign("req-001", b"tampered-by-replay", nonce)
+    except ec17.IdempotencyConflictError as exc:
+        print(f"如预期拒绝（{type(exc).__name__}）：{exc}")
+    print(f"  冲突后 nonce 仍为 {session.nonce_status(nonce)}，原重放仍返回同一对象："
+          f"{session.sign('req-001', message, nonce) is sess_sig}")
+
+    # 同一 nonce 签不同消息 -> NonceReuseError，不回收
+    print("\n-- nonce 重用：同一 nonce 签不同消息 --")
+    other_message = b"a-different-synthetic-message"
+    try:
+        session.sign("req-002", other_message, nonce)
+    except ec17.NonceReuseError as exc:
+        print(f"如预期拒绝（{type(exc).__name__}）：{exc}")
+    print(f"  nonce 状态 = {session.nonce_status(nonce)}（不回收），尝试重新预留：")
+    try:
+        session.reserve_nonce(nonce)
+    except ec17.NonceReservationError as exc:
+        print(f"  如预期拒绝（{type(exc).__name__}）：{exc}")
+    # 失败不登记请求 ID：req-002 签原消息仍可成功（确定性相同）
+    same_again = session.sign("req-002", message, nonce)
+    print(f"  req-002 未被失败占用，用它签原消息成功，签名一致："
+          f"{(same_again.r, same_again.s) == (sess_sig.r, sess_sig.s)}")
+
+    # 作废：另一个会话演示 reserved/revoked 路径
+    print("\n-- nonce 作废（reserved -> revoked，作废不可撤销）--")
+    session2 = registry.create_session("session-demo-2", secret_key)
+    session2.reserve_nonce(5)
+    session2.revoke_nonce(5)
+    print(f"nonce=5 作废后状态 = {session2.nonce_status(5)}")
+    try:
+        session2.sign("req-x", message, 5)
+    except ec17.NonceLifecycleError as exc:
+        print(f"  作废 nonce 签名被拒（{type(exc).__name__}）：{exc}")
+    try:
+        session2.revoke_nonce(5)
+    except ec17.NonceLifecycleError as exc:
+        print(f"  重复作废被拒（{type(exc).__name__}）：{exc}")
+
+    # 解析关系：若协议放任重用，sk = (s1-s2)/(e1-e2) mod 19 直接泄露私钥
+    print("\n-- 为什么必须防重用：两条会话各签一条消息，代数解出私钥 --")
+    sig_a = ec17.sign(secret_key, message, nonce)
+    sig_b = ec17.sign(secret_key, other_message, nonce)
+    e_a = ec17.challenge(sig_a.r, public_key, message)
+    e_b = ec17.challenge(sig_b.r, public_key, other_message)
+    recovered = ((sig_a.s - sig_b.s) * pow((e_a - e_b) % ec17.GROUP_ORDER,
+                                           -1, ec17.GROUP_ORDER)) % ec17.GROUP_ORDER
+    print(f"e1={e_a}, s1={sig_a.s}；e2={e_b}, s2={sig_b.s}")
+    print(f"sk = (s1-s2)/(e1-e2) mod 19 = {recovered}，与真实私钥 {secret_key} "
+          f"一致：{recovered == secret_key}")
+
+    # 关闭与阶段乱序
+    print("\n-- 会话关闭与注册表 --")
+    print(f"在册会话：{registry.session_ids()}")
+    registry.close_session("session-demo")
+    print("关闭 session-demo 并注销")
+    try:
+        registry.get_session("session-demo")
+    except ec17.SessionNotFoundError as exc:
+        print(f"  再取回被拒（{type(exc).__name__}）：{exc}")
+    try:
+        session.sign("req-after-close", message, nonce)
+    except ec17.SessionPhaseError as exc:
+        print(f"  关闭后签名被拒（{type(exc).__name__}）：{exc}")
+    print(f"  关闭后只读查询仍可用：nonce={nonce} 状态 = {session.nonce_status(nonce)}")
+    # 关闭已注销，同 ID 可重新创建为全新会话
+    rebuilt = registry.create_session("session-demo", secret_key)
+    print(f"  同 ID 重建成功，旧 nonce 状态不复存在：{rebuilt.nonce_status(nonce)}")
 
     elapsed = time.perf_counter() - started
     print(f"\n演示完成，实际计算耗时 {elapsed:.3f} 秒（无 sleep、无预录结果）。")

@@ -26,6 +26,16 @@ from ._errors import (
     MessageError,
     MessageTypeError,
     MessageTooLongError,
+    SessionError,
+    InvalidSessionIdError,
+    SessionNotFoundError,
+    SessionAlreadyExistsError,
+    SessionPhaseError,
+    NonceReservationError,
+    NonceNotReservedError,
+    NonceLifecycleError,
+    NonceReuseError,
+    IdempotencyConflictError,
 )
 from ._curve import (
     FIELD_PRIME,
@@ -57,6 +67,14 @@ from ._schnorr import (
     assert_verify,
     encode_signature,
     decode_signature,
+)
+from ._session import (
+    MAX_ID_CHARS,
+    NONCE_RESERVED,
+    NONCE_USED,
+    NONCE_REVOKED,
+    SigningSession,
+    SessionRegistry,
 )
 
 __all__ = [
@@ -112,4 +130,21 @@ __all__ = [
     "MessageError",
     "MessageTypeError",
     "MessageTooLongError",
+    # 会话 / nonce 生命周期
+    "MAX_ID_CHARS",
+    "NONCE_RESERVED",
+    "NONCE_USED",
+    "NONCE_REVOKED",
+    "SigningSession",
+    "SessionRegistry",
+    "SessionError",
+    "InvalidSessionIdError",
+    "SessionNotFoundError",
+    "SessionAlreadyExistsError",
+    "SessionPhaseError",
+    "NonceReservationError",
+    "NonceNotReservedError",
+    "NonceLifecycleError",
+    "NonceReuseError",
+    "IdempotencyConflictError",
 ]
