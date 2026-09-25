@@ -88,3 +88,27 @@ class MessageTypeError(MessageError, TypeError):
 
 class MessageTooLongError(MessageError):
     """消息长度超过 :data:`ec17.MAX_MESSAGE_BYTES`。"""
+
+
+class BatchError(EC17Error):
+    """批验签相关错误的基类。"""
+
+
+class BatchLengthMismatchError(BatchError):
+    """系数个数与批大小不一致。"""
+
+
+class BatchTooLargeError(BatchError):
+    """批大小超过 :data:`ec17.MAX_BATCH_SIZE`。"""
+
+
+class InvalidCoefficientError(BatchError):
+    """聚合系数越界或为零（零系数会把对应项静默剔除，故禁止）。"""
+
+
+class BatchItemError(BatchError):
+    """批中第 index 项非法（解码/结构校验失败），整批拒绝。"""
+
+    def __init__(self, index: int, detail: str):
+        self.index = index
+        super().__init__(f"批项[{index}] 非法：{detail}（整批拒绝，无部分通过）")

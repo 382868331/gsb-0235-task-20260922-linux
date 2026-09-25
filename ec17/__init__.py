@@ -26,6 +26,11 @@ from ._errors import (
     MessageError,
     MessageTypeError,
     MessageTooLongError,
+    BatchError,
+    BatchLengthMismatchError,
+    BatchTooLargeError,
+    InvalidCoefficientError,
+    BatchItemError,
 )
 from ._curve import (
     FIELD_PRIME,
@@ -58,6 +63,14 @@ from ._schnorr import (
     encode_signature,
     decode_signature,
 )
+from ._batch import (
+    MAX_BATCH_SIZE,
+    BatchEntry,
+    BatchReport,
+    batch_verify,
+    batch_verify_encoded,
+    bisect_aggregate_candidates,
+)
 
 __all__ = [
     # 常量
@@ -67,6 +80,7 @@ __all__ = [
     "GROUP_ORDER",
     "GENERATOR",
     "MAX_MESSAGE_BYTES",
+    "MAX_BATCH_SIZE",
     # 数据结构
     "Point",
     "INFINITY",
@@ -90,6 +104,12 @@ __all__ = [
     "assert_verify",
     "encode_signature",
     "decode_signature",
+    # 教学批验签
+    "BatchEntry",
+    "BatchReport",
+    "batch_verify",
+    "batch_verify_encoded",
+    "bisect_aggregate_candidates",
     # 错误类型
     "EC17Error",
     "ValidationError",
@@ -112,4 +132,9 @@ __all__ = [
     "MessageError",
     "MessageTypeError",
     "MessageTooLongError",
+    "BatchError",
+    "BatchLengthMismatchError",
+    "BatchTooLargeError",
+    "InvalidCoefficientError",
+    "BatchItemError",
 ]

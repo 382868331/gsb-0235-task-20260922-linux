@@ -80,6 +80,39 @@ def main():
     except ec17.ScalarOutOfRangeError as exc:
         print(f"如预期在边界拒绝（{type(exc).__name__}）：{exc}")
 
+    # --- 3. 教学批验签：聚合通过 ≠ 逐项有效 ----------------------------------
+    print("\n-- 教学批验签（aggregate_ok 不是安全结论） --")
+    keys = (3, 7, 11)
+    entries = []
+    for i in range(12):
+        sk = keys[i % 3]
+        sig = ec17.sign(sk, f"batch-{i}".encode(), (i % 18) + 1)
+        entries.append(ec17.BatchEntry(f"batch-{i}".encode(),
+                                       ec17.derive_public_key(sk), sig.r, sig.s))
+    coeffs = [(i % 18) + 1 for i in range(12)]
+    report = ec17.batch_verify(entries, coeffs, exact=True)
+    print(f"12 条合法签名：aggregate_ok={report.aggregate_ok}, "
+          f"all_valid={report.all_valid}, invalid_indices={report.invalid_indices}, "
+          f"点加次数={report.point_additions}")
+
+    # 抵消反例：两条各自无效（s 分别 +1/-1，缺陷互为相反数），聚合却通过
+    e1, e2 = entries[0], entries[1]
+    bad1 = ec17.BatchEntry(e1.message, e1.public_key, e1.r, (e1.s + 1) % 19)
+    bad2 = ec17.BatchEntry(e2.message, e2.public_key, e2.r, (e2.s - 1) % 19)
+    print(f"逐项验签 bad1={ec17.verify(e1.message, e1.public_key, e1.r, bad1.s)}, "
+          f"bad2={ec17.verify(e2.message, e2.public_key, e2.r, bad2.s)}（都无效）")
+    cancel = ec17.batch_verify([bad1, bad2], [1, 1], exact=True)
+    print(f"抵消对批验签：aggregate_ok={cancel.aggregate_ok}（会误导！）, "
+          f"exact 后 all_valid={cancel.all_valid}, "
+          f"invalid_indices={cancel.invalid_indices}")
+
+    # 非法编码整批拒绝并给出下标
+    try:
+        ec17.batch_verify_encoded(
+            [(b"m", ec17.encode_point(public_key), b"\x00", b"\x01")], [1])
+    except ec17.BatchItemError as exc:
+        print(f"非法编码整批拒绝（index={exc.index}）：{exc}")
+
     elapsed = time.perf_counter() - started
     print(f"\n演示完成，实际计算耗时 {elapsed:.3f} 秒（无 sleep、无预录结果）。")
 
