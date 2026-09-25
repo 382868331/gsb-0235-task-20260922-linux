@@ -26,6 +26,9 @@ from ._errors import (
     MessageError,
     MessageTypeError,
     MessageTooLongError,
+    BatchError,
+    InvalidCoefficientError,
+    BatchItemError,
 )
 from ._curve import (
     FIELD_PRIME,
@@ -39,6 +42,8 @@ from ._curve import (
     point_neg,
     point_add,
     scalar_mul,
+    reset_point_add_counter,
+    point_add_count,
 )
 from ._encoding import (
     encode_point,
@@ -58,6 +63,14 @@ from ._schnorr import (
     encode_signature,
     decode_signature,
 )
+from ._batch import (
+    MAX_BATCH_ITEMS,
+    BatchEntry,
+    BatchReport,
+    batch_verify,
+    batch_verify_encoded,
+    clear_multiples_cache,
+)
 
 __all__ = [
     # 常量
@@ -67,15 +80,20 @@ __all__ = [
     "GROUP_ORDER",
     "GENERATOR",
     "MAX_MESSAGE_BYTES",
+    "MAX_BATCH_ITEMS",
     # 数据结构
     "Point",
     "INFINITY",
     "Signature",
+    "BatchEntry",
+    "BatchReport",
     # 曲线运算
     "is_on_curve",
     "point_neg",
     "point_add",
     "scalar_mul",
+    "reset_point_add_counter",
+    "point_add_count",
     # 点/标量编码
     "encode_point",
     "decode_point",
@@ -90,6 +108,10 @@ __all__ = [
     "assert_verify",
     "encode_signature",
     "decode_signature",
+    # 教学批验签
+    "batch_verify",
+    "batch_verify_encoded",
+    "clear_multiples_cache",
     # 错误类型
     "EC17Error",
     "ValidationError",
@@ -112,4 +134,7 @@ __all__ = [
     "MessageError",
     "MessageTypeError",
     "MessageTooLongError",
+    "BatchError",
+    "InvalidCoefficientError",
+    "BatchItemError",
 ]

@@ -34,6 +34,21 @@ INFINITY = None
 Point = tuple[int, int]
 """仿射有限点 ``(x, y)``；无穷远点见 :data:`INFINITY`。"""
 
+# 教学用点加调用计数器：只统计 point_add 实际执行的群加法次数，
+# 供批验签演示“共享倍点表 vs 重复调用”的开销对比。不属于验签逻辑。
+_POINT_ADD_CALLS = 0
+
+
+def reset_point_add_counter() -> None:
+    """把教学用点加计数器清零。"""
+    global _POINT_ADD_CALLS
+    _POINT_ADD_CALLS = 0
+
+
+def point_add_count() -> int:
+    """返回自上次清零以来 `point_add` 实际执行的群加法次数。"""
+    return _POINT_ADD_CALLS
+
 
 def _reject_nonint(name: str, value) -> None:
     """整数参数的统一类型校验：bool 一律拒绝；浮点（含 NaN/Infinity）拒绝。"""
@@ -139,6 +154,9 @@ def point_add(p, q):
     """
     p = _validate_any_point("p", p)
     q = _validate_any_point("q", q)
+
+    global _POINT_ADD_CALLS
+    _POINT_ADD_CALLS += 1
 
     if p is INFINITY:
         return q

@@ -88,3 +88,22 @@ class MessageTypeError(MessageError, TypeError):
 
 class MessageTooLongError(MessageError):
     """消息长度超过 :data:`ec17.MAX_MESSAGE_BYTES`。"""
+
+
+class BatchError(EC17Error):
+    """批验签相关错误的基类。"""
+
+
+class InvalidCoefficientError(BatchError, ValidationError):
+    """批验签系数非法：不是 1..18 的非零域元素，或数量与批长度不符。"""
+
+
+class BatchItemError(BatchError):
+    """批中第 `index` 项非法（编码/结构），整批拒绝。
+
+    属性 `index` 给出 0 基输入序号；原始异常链在 `__cause__`。
+    """
+
+    def __init__(self, index: int, message: str):
+        self.index = index
+        super().__init__(f"批第 {index} 项非法：{message}")

@@ -19,7 +19,7 @@ Schnorr 风格教学签名的**严格验签**。
 ## 准确命令
 
 ```bash
-python -m unittest discover -s tests -v   # 运行必要测试（62 个，约 0.2 秒）
+python -m unittest discover -s tests -v   # 运行必要测试（77 个，约 0.2 秒）
 python demo.py                            # 固定输入演示（约 0.04 秒，远低于 8 秒）
 ```
 
@@ -74,6 +74,35 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
 结构/范围非法抛对应可定位异常；仅“结构合法但等式 `s·G = R + e·P` 不成立”时
 `verify` 返回 `False`（`assert_verify` 抛 `SignatureMismatchError`）。
 
+### 教学批验签（`ec17/_batch.py`，仅教学，不安全）
+
+- `BatchEntry(message, public_key, r, s)`：批中一项（不可变 dataclass）。
+- `batch_verify(entries, coefficients, *, exact=False) -> BatchReport`：
+  先**逐项严格校验**（消息、R/P 有限且在曲线上、s ∈ 0..18），任一非法即
+  **整批拒绝**（`BatchItemError`，`.index` 为 0 基输入序号）；再由**调用方
+  提供的非零域系数** a_i ∈ 1..18（禁止 0，数量必须与批等长）检查加权聚合等式
+  `(Σ a_i·s_i)·G == Σ a_i·R_i + Σ (a_i·e_i)·P_i`（确定性、按输入序求和）。
+- `batch_verify_encoded(encoded_entries, coefficients, *, exact=False)`：
+  编码入口，每项 `(message, public_key_enc, r_enc, s_enc)` 按严格规则解码，
+  非法编码同样整批拒绝并带索引。
+- `BatchReport` 字段：`aggregate_ok`（聚合等式是否通过）、`exact`、
+  `all_valid`（仅 exact 模式给出，否则 None）、`invalid_indices`
+  （exact 模式下按输入序的无效索引，否则 None）、`item_count`。
+- **空批有效**：空和恒等成立，exact 下 `all_valid=True`。
+- exact 模式用**共享倍点表**（G 的表为模块级常量；公钥表缓存于模块级
+  `_MULTIPLES_CACHE`，只存公开点倍数，**不缓存消息质询**——e 每次现场
+  重算）逐项确认；聚合失败时先二分缩小候选以安排检查顺序，但**每一项都会被
+  单独检查**，聚合通过的子组不允许跳过（可能藏有抵消）。可用
+  `clear_multiples_cache()` 清空缓存。
+- 教学计数器 `reset_point_add_counter()` / `point_add_count()` 统计
+  `point_add` 实际执行次数，用于对比共享表批验签与重复 `verify` 的开销。
+
+> ⚠️ **聚合等式通过 ≠ 逐项全部有效。** 小群上错误签名可以相互抵消
+> （如 a₁·(+1) + a₂·(−1) ≡ 0 mod 19）：两个单独无效的签名可以让加权聚合
+> 等式成立。`aggregate_ok=True` 绝不能当作安全结论，只有 exact 模式的
+> `all_valid` / `invalid_indices` 才能判定逐项有效性。测试与 demo 都
+> 包含这一必测反例。
+
 ## 错误语义（`ec17/_errors.py`）
 
 所有异常继承 `EC17Error`；类型错误同时是内置 `TypeError`。消息一律带参数名。
@@ -87,6 +116,9 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
   `NonShortestEncodingError`（任何尾随字节、`00` 后携带字节）。
 - 签名：`ScalarOutOfRangeError`、`SignatureMismatchError`、
   `InvalidSecretKeyError`、`InvalidNonceError`、`MessageTooLongError`。
+- 批验签：`BatchError`、`InvalidCoefficientError`（系数为 0、越界、
+  数量不符或类型非法）、`BatchItemError`（第 `index` 项非法，整批拒绝，
+  原始异常在 `__cause__`）。
 
 设计原则：非法输入**报错而非静默纠正**；不存在“部分成功”的有状态变更
 （所有运算均为纯函数）；本库没有“搜索预算”类算法，也不区分预算耗尽/无解。
@@ -108,6 +140,7 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
 - 私钥：1..18；签名 nonce：1..18。
 - 消息：`bytes`，长度 0..`MAX_MESSAGE_BYTES`(=65 535) 字节；`str` 不隐式编码。
 - 编码长度：点 1 或 2 字节、标量恰 1 字节、签名帧恰 3 字节。
+- 批长度：0..`MAX_BATCH_ITEMS`(=4096) 项；系数每项一个，1..18 的非零域元素。
 - 所有整数参数拒绝 `bool`、`float`（含 NaN/Infinity）。
 
 ## 浮点与误差口径
@@ -138,7 +171,11 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
 无穷远单位元、逆点、交换/结合律；编码的空/截断/非法前缀/域外/非最短/
 错误奇偶；签名 324 组 (私钥×nonce) 对独立参考的全量比对、s=0 合法签名、
 篡改消息、错误公钥、翻转 R 奇偶、**s+19 可塑性在边界被拒**、R/P 无穷远与
-不在曲线上、消息类型与长度上限、3 字节签名帧的各类畸形。
+不在曲线上、消息类型与长度上限、3 字节签名帧的各类畸形；批验签的空批、
+全有效批、单项定位、**两个单独无效但聚合抵消的必测反例**（含非平凡系数
+2·(+1)+1·(−2)≡0）、exact 与独立参考逐项比对、非法编码/非最短/s=19 整批
+拒绝且索引正确、系数校验、缓存只存公开点倍数、exact 点加次数少于重复
+`verify`、以及“聚合通过的子组也必须逐项检查”。
 编解码往返一致只作为**补充**断言，不作为期望值来源。
 
 ## demo.py
@@ -147,12 +184,17 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
 message=b"ec17-schnorr-teaching"` 真实生成并验证一个签名（打印 R/P 编码、
 SHA256、e、s 与验签结果），并**实际触发**两个拒绝边界：篡改末字节的消息
 （`SignatureMismatchError`，`verify → False`）与 `s+19`（`ScalarOutOfRangeError`）。
-不含 `sleep`，不使用预录结果，也不做压力测试。
+随后演示批验签：36 项全有效批、两个单独无效但加权误差相互抵消的反例
+（`aggregate_ok=True` 但 exact 报 `invalid_indices=(0, 1)`）、非法编码
+整批拒绝（`BatchItemError` 带索引），以及 exact 批验签与重复 `verify`
+的实际点加次数对比（346 < 385）。不含 `sleep`，不使用预录结果，也不做压力测试。
 
 ## 已知限制
 
 - 仅支持这一条 17 阶小曲线与上述固定协议，不支持任意曲线参数、随机 nonce、
-  批验签、DER/SEC1 多字节整数编码或任何标准序列化。
+  DER/SEC1 多字节整数编码或任何标准序列化。
+- 批验签的聚合等式在小群上可被“误差抵消”骗过（见上方警告），
+  `aggregate_ok` 不能作为安全结论；exact 模式才是逐项判定的唯一依据。
 - nonce 完全由调用方负责；重用 nonce 会直接泄露私钥（这正是教学要演示的风险）。
 - 不提供任何侧信道防护（标量乘非常量时间）；在 19 元素群上也无安全可言。
 - 无版本化/前向兼容承诺：这是一次性教学交付。
@@ -166,11 +208,13 @@ ec17/            可导入库
   _curve.py        曲线点加/倍乘/标量乘
   _encoding.py     点与标量压缩编码（严格/最短/域外检查）
   _schnorr.py      Schnorr 风格教学签名与严格验签
+  _batch.py        教学批验签（聚合等式 + exact 逐项定位）
 tests/
   reference.py                     独立参考（不依赖被测核心）
   test_group_law.py                穷举群表/结合律/单位元/逆点
   test_encoding.py                 编码严格性
   test_schnorr.py                  验签/篡改/可塑性/无穷与离曲线
+  test_batch.py                    批验签/抵消反例/缓存与点加计数
   test_reference_independence.py   参考隔离性（AST）
 demo.py          固定输入演示
 README.md
