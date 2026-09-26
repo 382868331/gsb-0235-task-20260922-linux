@@ -26,6 +26,14 @@ from ._errors import (
     MessageError,
     MessageTypeError,
     MessageTooLongError,
+    SessionError,
+    SessionStateError,
+    UnknownPartyError,
+    CommitmentMismatchError,
+    DuplicatePartialResponseError,
+    NonceReuseError,
+    AggregatePointAtInfinityError,
+    PartialResponseMismatchError,
 )
 from ._curve import (
     FIELD_PRIME,
@@ -57,6 +65,13 @@ from ._schnorr import (
     assert_verify,
     encode_signature,
     decode_signature,
+)
+from ._twoparty import (
+    PARTY_IDS,
+    MAX_SESSION_ID_BYTES,
+    Party,
+    TwoPartySession,
+    aggregate_public_key,
 )
 
 __all__ = [
@@ -90,6 +105,12 @@ __all__ = [
     "assert_verify",
     "encode_signature",
     "decode_signature",
+    # 两方加法份额协作签名
+    "PARTY_IDS",
+    "MAX_SESSION_ID_BYTES",
+    "Party",
+    "TwoPartySession",
+    "aggregate_public_key",
     # 错误类型
     "EC17Error",
     "ValidationError",
@@ -112,4 +133,12 @@ __all__ = [
     "MessageError",
     "MessageTypeError",
     "MessageTooLongError",
+    "SessionError",
+    "SessionStateError",
+    "UnknownPartyError",
+    "CommitmentMismatchError",
+    "DuplicatePartialResponseError",
+    "NonceReuseError",
+    "AggregatePointAtInfinityError",
+    "PartialResponseMismatchError",
 ]

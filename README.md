@@ -19,8 +19,9 @@ Schnorr 风格教学签名的**严格验签**。
 ## 准确命令
 
 ```bash
-python -m unittest discover -s tests -v   # 运行必要测试（62 个，约 0.2 秒）
-python demo.py                            # 固定输入演示（约 0.04 秒，远低于 8 秒）
+python -m unittest discover -s tests -v   # 运行必要测试（81 个，约 0.3 秒）
+python demo.py                            # 单方签名固定输入演示（约 0.04 秒）
+python demo_iteration.py                  # 两方协作签名演示（约 0.07 秒，远低于 90 秒）
 ```
 
 ## 公开数据结构
@@ -68,7 +69,41 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
   - `assert_verify(message, public_key, r, s) -> None`（等式失败抛异常）
   - `verify_encoded(message, public_key_enc, r_enc, s_enc) -> bool`（字节入口）
   - `encode_signature(sig) -> bytes`（固定 3 字节：2 字节 R + 1 字节 s）、
-    `decode_signature(data, message) -> Signature`
+  `decode_signature(data, message) -> Signature`
+
+### 两方加法份额协作签名（`ec17/_twoparty.py`，本次迭代新增）
+
+限定模型：两方各持加法私钥份额 sk1、sk2 ∈ 1..18，**公钥为两方份额公钥之和**
+P = P1 + P2 = (sk1+sk2)·G。合成签名与单方签名同构，直接交原验签器
+`verify`/`assert_verify` 验证（质询函数不变，绑定聚合公钥、消息与聚合 nonce）。
+
+- `Party(party_id, secret_share)`：一方。party_id 只能是 1 或 2（参与方顺序
+  固定，1 先 2 后）；`public_share` 为公钥份额。Party 对象跨会话跟踪 nonce 状态。
+- `TwoPartySession(session_id, message, party1, party2)`：单次会话。
+  `session_id` 为非空 bytes（≤ 64 字节）；聚合公钥为无穷远时拒绝建立。
+- 协议步骤（乱序抛 `SessionStateError`）：
+  1. `commit(party_id, nonce_share) -> bytes`：承诺 =
+     SHA256(域分隔 ∥ session_id ∥ party_id ∥ encode(R_i) ∥ message)，
+     **会话 ID、参与方顺序与消息在此绑定**；
+  2. `reveal(party_id, nonce_share) -> Point`：公开 nonce 点并核对承诺，
+     不符抛 `CommitmentMismatchError`；双方公开后聚合 R = R1+R2，
+     无穷远抛 `AggregatePointAtInfinityError`；
+  3. `partial_response(party_id) -> int`：s_i = (k_i + e·sk_i) mod 19，
+     逐项验证部分响应等式 s_i·G = R_i + e·P_i；重复提交抛
+     `DuplicatePartialResponseError`；
+  4. `finalize() -> Signature`：s = (s1+s2) mod 19，用原验签器自检后返回。
+- `cancel(party_id)`：一方退出，会话立即失效；**已公开的 nonce 份额保持
+  烧毁**（哪怕另一方随后退出也不可复用），未公开的预留被释放。
+- `aggregate_public_key(p1, p2) -> Point`：独立的聚合公钥 helper，
+  拒绝无穷远结果。
+- nonce 复用：reveal 成功后 nonce 份额在所属 `Party` 内永久烧毁，
+  任何会话再使用抛 `NonceReuseError`；已承诺未公开的 nonce 处于预留态，
+  并发会话复用同样被拒绝。
+
+> ⚠️ 本题只是**限定模型下的协作签名练习**，不宣称生产阈值签名协议的完整
+> 安全性（无可证明安全归约、无并发会话安全、无常量时间实现、群仅 19 个
+> 元素可瞬间穷举）。会话绑定在承诺/状态层强制执行；质询格式与原单方
+> 验签器保持一致，不在质询中额外混入会话 ID。
 
 验签要求：**s ∈ 0..18；R、P 都不能是无穷远点且必须在曲线上**。
 结构/范围非法抛对应可定位异常；仅“结构合法但等式 `s·G = R + e·P` 不成立”时
@@ -87,6 +122,10 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
   `NonShortestEncodingError`（任何尾随字节、`00` 后携带字节）。
 - 签名：`ScalarOutOfRangeError`、`SignatureMismatchError`、
   `InvalidSecretKeyError`、`InvalidNonceError`、`MessageTooLongError`。
+- 会话：`SessionStateError`（乱序/已取消/已完成）、`UnknownPartyError`、
+  `CommitmentMismatchError`、`DuplicatePartialResponseError`、
+  `NonceReuseError`、`AggregatePointAtInfinityError`、
+  `PartialResponseMismatchError`（均继承 `SessionError` ← `EC17Error`）。
 
 设计原则：非法输入**报错而非静默纠正**；不存在“部分成功”的有状态变更
 （所有运算均为纯函数）；本库没有“搜索预算”类算法，也不区分预算耗尽/无解。
@@ -107,6 +146,7 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
 - 点坐标 x,y：整数，0..16；群标量（s / scalar_mul 的 k）：0..18。
 - 私钥：1..18；签名 nonce：1..18。
 - 消息：`bytes`，长度 0..`MAX_MESSAGE_BYTES`(=65 535) 字节；`str` 不隐式编码。
+- 会话 ID：非空 `bytes`，长度 1..`MAX_SESSION_ID_BYTES`(=64) 字节。
 - 编码长度：点 1 或 2 字节、标量恰 1 字节、签名帧恰 3 字节。
 - 所有整数参数拒绝 `bool`、`float`（含 NaN/Infinity）。
 
@@ -149,6 +189,14 @@ SHA256、e、s 与验签结果），并**实际触发**两个拒绝边界：篡�
 （`SignatureMismatchError`，`verify → False`）与 `s+19`（`ScalarOutOfRangeError`）。
 不含 `sleep`，不使用预录结果，也不做压力测试。
 
+## demo_iteration.py
+
+`python demo_iteration.py` 现场演示两方协作签名：固定合成份额
+(sk1,sk2)=(5,9)、nonce (3,11)，完整走 commit→reveal→partial→finalize，
+合成签名交原验签器验证通过；随后实际触发一项边界情况——一方公开 nonce
+后另一方 cancel，已公开 nonce 在新会话复用被 `NonceReuseError` 拒绝。
+全程约 0.07 秒，无 `sleep`、无预录、无随机源。
+
 ## 已知限制
 
 - 仅支持这一条 17 阶小曲线与上述固定协议，不支持任意曲线参数、随机 nonce、
@@ -156,6 +204,9 @@ SHA256、e、s 与验签结果），并**实际触发**两个拒绝边界：篡�
 - nonce 完全由调用方负责；重用 nonce 会直接泄露私钥（这正是教学要演示的风险）。
 - 不提供任何侧信道防护（标量乘非常量时间）；在 19 元素群上也无安全可言。
 - 无版本化/前向兼容承诺：这是一次性教学交付。
+- 两方协议仅为教学模型：会话状态保存在内存中的 `TwoPartySession`/`Party`
+  对象里，进程退出即失效；不处理网络传输、并发会话安全或恶意方可证明
+  安全性问题。
 
 ## 目录
 
@@ -166,13 +217,16 @@ ec17/            可导入库
   _curve.py        曲线点加/倍乘/标量乘
   _encoding.py     点与标量压缩编码（严格/最短/域外检查）
   _schnorr.py      Schnorr 风格教学签名与严格验签
+  _twoparty.py     两方加法份额协作签名（commit/reveal/partial/finalize）
 tests/
   reference.py                     独立参考（不依赖被测核心）
   test_group_law.py                穷举群表/结合律/单位元/逆点
   test_encoding.py                 编码严格性
   test_schnorr.py                  验签/篡改/可塑性/无穷与离曲线
+  test_twoparty.py                 两方协议：正常路径+篡改/调换会话/取消等反例
   test_reference_independence.py   参考隔离性（AST）
 demo.py          固定输入演示
+demo_iteration.py  两方协作签名演示（含一项边界情况）
 README.md
 requirements.txt （仅说明：标准库，无第三方依赖）
 ```
