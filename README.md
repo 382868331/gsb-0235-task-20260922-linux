@@ -19,8 +19,11 @@ Schnorr 风格教学签名的**严格验签**。
 ## 准确命令
 
 ```bash
-python -m unittest discover -s tests -v   # 运行必要测试（62 个，约 0.2 秒）
-python demo.py                            # 固定输入演示（约 0.04 秒，远低于 8 秒）
+python -m venv .venv                      # 可选：隔离环境（无第三方依赖，仅为整洁）
+. .venv/bin/activate                      # 或直接用自己的 python3.14
+python -m unittest discover -s tests -v   # 运行必要测试（80 个，约 0.5 秒）
+python demo.py                            # 旧版单方签名演示（保留，约 0.04 秒）
+python demo_iteration.py                  # 两方协作签名演示（约 0.001 秒，远低于 90 秒）
 ```
 
 ## 公开数据结构
@@ -74,6 +77,34 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
 结构/范围非法抛对应可定位异常；仅“结构合法但等式 `s·G = R + e·P` 不成立”时
 `verify` 返回 `False`（`assert_verify` 抛 `SignatureMismatchError`）。
 
+### 两方加法份额协作签名（`ec17/_twoparty.py`，本迭代新增）
+
+限定模型：两方各持加法私钥份额 `sk1, sk2 ∈ 1..18`，聚合公钥为份额公钥之和
+`P = P1 + P2`；合成签名直接通过**原**验签器。
+
+- `Party(party_id, secret_share)`：参与方。`party_id` 只能是 1 或 2
+  （决定参与方顺序绑定）；`public_share` 为份额公钥；`burned_nonces`
+  为已烧掉的 nonce 份额只读视图。
+- `party.start_session(session_id, message, peer, nonce) -> PartySession`：
+  `session_id` 为 1..64 字节非空 bytes；`nonce` 为本方 nonce 份额（1..18，
+  显式给定，同 `sign` 的教学约定）。
+- 四轮协议（每方视角，顺序由状态机强制）：
+  1. `sess.commitment`（32 字节）→ `sess.receive_commitment(peer_commitment)`；
+  2. `sess.reveal() -> bytes` 公开本方 nonce 点（**此刻烧掉 nonce 份额，
+     即使对方随后退出也不回收**）→ `sess.receive_reveal(peer_r_enc)`
+     核对对方承诺并计算聚合点 R 与质询 e；
+  3. `sess.partial_response() -> int` → `sess.receive_partial(peer_s)`
+     **逐项验证**对方部分响应等式 `s_i·G == R_i + e·P_i`；
+  4. `sess.finalize() -> Signature` 合成 `s = (s1+s2) mod 19` 并用原验签器自检。
+- 绑定：实际待签消息为
+  `bound = b"ec17-2p-bind-v1" ∥ session_id ∥ encode(P1) ∥ encode(P2) ∥ message`
+  （P1 在前即参与方顺序绑定）；质询完全复用原公式
+  `e = SHA256(encode(R) ∥ encode(P) ∥ bound) mod 19`，因此
+  `verify(sig.message, P_agg, sig.r, sig.s)` 用**原验签器**即可验证。
+  最终 `Signature.message` 就是 bound 消息。
+- 聚合点保护：聚合 nonce 点或聚合公钥为无穷远点即中止
+  （`InfinityAggregateError`）。
+
 ## 错误语义（`ec17/_errors.py`）
 
 所有异常继承 `EC17Error`；类型错误同时是内置 `TypeError`。消息一律带参数名。
@@ -87,6 +118,12 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
   `NonShortestEncodingError`（任何尾随字节、`00` 后携带字节）。
 - 签名：`ScalarOutOfRangeError`、`SignatureMismatchError`、
   `InvalidSecretKeyError`、`InvalidNonceError`、`MessageTooLongError`。
+- 两方协议（`ProtocolError` 子类）：`SessionIdError`（空/超长/类型非法的
+  会话 ID）、`SessionStateError`（步骤顺序错误）、`CommitmentMismatchError`
+  （公开的 nonce 点与承诺不符）、`DuplicatePartialResponseError`（重复部分
+  响应）、`NonceReuseError`（nonce 份额公开后复用）、`InfinityAggregateError`
+  （聚合 nonce 点/聚合公钥为无穷远）、`PartialResponseMismatchError`
+  （部分响应等式不成立）。
 
 设计原则：非法输入**报错而非静默纠正**；不存在“部分成功”的有状态变更
 （所有运算均为纯函数）；本库没有“搜索预算”类算法，也不区分预算耗尽/无解。
@@ -140,6 +177,10 @@ python demo.py                            # 固定输入演示（约 0.04 秒，
 篡改消息、错误公钥、翻转 R 奇偶、**s+19 可塑性在边界被拒**、R/P 无穷远与
 不在曲线上、消息类型与长度上限、3 字节签名帧的各类畸形。
 编解码往返一致只作为**补充**断言，不作为期望值来源。
+`tests/test_twoparty.py` 覆盖两方协议：完整四轮（双方 finalize 一致、原验签器
+通过、逐项部分响应等式）、会话绑定改变签名，以及反例——篡改消息、调换会话
+ID、承诺不匹配、重复/错误部分响应、聚合 nonce 点与聚合公钥无穷远、一方公开
+nonce 后退出（nonce 永久烧掉、另一方未公开不受影响）。
 
 ## demo.py
 
@@ -151,6 +192,9 @@ SHA256、e、s 与验签结果），并**实际触发**两个拒绝边界：篡�
 
 ## 已知限制
 
+- 两方协作签名只是**限定模型下的教学练习**：假设双方按状态机顺序执行、
+  不对恶意方提供零知识证明或中止可问责性，无并发会话防护、无侧信道防护；
+  **不宣称生产阈值签名协议（如 FROST）的完整安全性**。
 - 仅支持这一条 17 阶小曲线与上述固定协议，不支持任意曲线参数、随机 nonce、
   批验签、DER/SEC1 多字节整数编码或任何标准序列化。
 - nonce 完全由调用方负责；重用 nonce 会直接泄露私钥（这正是教学要演示的风险）。
@@ -166,13 +210,16 @@ ec17/            可导入库
   _curve.py        曲线点加/倍乘/标量乘
   _encoding.py     点与标量压缩编码（严格/最短/域外检查）
   _schnorr.py      Schnorr 风格教学签名与严格验签
+  _twoparty.py     两方加法份额协作签名（本迭代新增）
 tests/
   reference.py                     独立参考（不依赖被测核心）
   test_group_law.py                穷举群表/结合律/单位元/逆点
   test_encoding.py                 编码严格性
   test_schnorr.py                  验签/篡改/可塑性/无穷与离曲线
   test_reference_independence.py   参考隔离性（AST）
-demo.py          固定输入演示
+  test_twoparty.py                 两方协作签名（含篡改/换会话/取消反例）
+demo.py          固定输入演示（旧版单方签名，保留）
+demo_iteration.py 两方协作签名演示（本迭代新增）
 README.md
 requirements.txt （仅说明：标准库，无第三方依赖）
 ```

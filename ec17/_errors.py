@@ -88,3 +88,35 @@ class MessageTypeError(MessageError, TypeError):
 
 class MessageTooLongError(MessageError):
     """消息长度超过 :data:`ec17.MAX_MESSAGE_BYTES`。"""
+
+
+class ProtocolError(EC17Error):
+    """两方协作签名协议相关错误的基类。"""
+
+
+class SessionIdError(ProtocolError):
+    """会话 ID 非法（空、超长或类型不对）。"""
+
+
+class SessionStateError(ProtocolError):
+    """协议步骤顺序错误（如未收承诺就请求部分响应）。"""
+
+
+class CommitmentMismatchError(ProtocolError):
+    """对方公开的 nonce 点与其先前承诺不匹配。"""
+
+
+class DuplicatePartialResponseError(ProtocolError):
+    """同一会话中收到重复的部分响应。"""
+
+
+class NonceReuseError(ProtocolError):
+    """nonce 份额一旦公开即不可复用（即使对方随后退出）。"""
+
+
+class InfinityAggregateError(ProtocolError):
+    """聚合 nonce 点或聚合公钥为无穷远点，协议必须中止。"""
+
+
+class PartialResponseMismatchError(ProtocolError):
+    """部分响应等式 s_i·G = R_i + e·P_i 不成立。"""
